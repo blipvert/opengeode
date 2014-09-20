@@ -57,7 +57,8 @@ def parse_asn1(*files, **options):
     assert isinstance(ast_version, ASN1)
     assert isinstance(flags, list)
 
-    asn1scc_root = os.path.dirname(spawn.find_executable('asn1.exe'))
+    asn1scc_path = spawn.find_executable('asn1.exe')
+    asn1scc_root = os.path.dirname(asn1scc_path)
     tempdir = tempfile.mkdtemp()
     filename = str(uuid.uuid4()).replace('-', '_')
     filepath = tempdir + os.sep + filename + '.py'
@@ -69,9 +70,12 @@ def parse_asn1(*files, **options):
     #with open(tmp_stg, 'w') as fd:
     #    fd.write(stg_data)
 
-    args = ['asn1.exe',
+    args = [asn1scc_path,
             '-customStgAstVerion', str(ast_version.value),
             '-customStg', stg + ':' + filepath] + list(*files)
+
+    if sys.platform == 'darwin':
+        args.insert(0, 'mono')
 
     LOG.debug('Calling: ' + ' '.join(args))
     try:
