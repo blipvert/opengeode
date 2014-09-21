@@ -70,6 +70,9 @@ class Context():
         ty = core.Type.function(self.void, [self.i8_ptr], True)
         self.funcs['printf'] = self.module.add_function(ty, 'printf')
 
+        ty = core.Type.function(self.double, [self.double])
+        self.funcs['round'] = self.module.add_function(ty, 'round')
+
         self.funcs['memcpy'] = core.Function.intrinsic(
             self.module,
             core.INTR_MEMCPY,
@@ -82,9 +85,45 @@ class Context():
             [self.double]
         )
 
+        self.funcs['ceil'] = core.Function.intrinsic(
+            self.module,
+            core.INTR_CEIL,
+            [self.double]
+        )
+
+        self.funcs['cos'] = core.Function.intrinsic(
+            self.module,
+            core.INTR_COS,
+            [self.double]
+        )
+
         self.funcs['fabs'] = core.Function.intrinsic(
             self.module,
             core.INTR_FABS,
+            [self.double]
+        )
+
+        self.funcs['floor'] = core.Function.intrinsic(
+            self.module,
+            core.INTR_FLOOR,
+            [self.double]
+        )
+
+        self.funcs['sin'] = core.Function.intrinsic(
+            self.module,
+            core.INTR_SIN,
+            [self.double]
+        )
+
+        self.funcs['sqrt'] = core.Function.intrinsic(
+            self.module,
+            core.INTR_SQRT,
+            [self.double]
+        )
+
+        self.funcs['trunc'] = core.Function.intrinsic(
+            self.module,
+            core.INTR_TRUNC,
             [self.double]
         )
 
@@ -1271,20 +1310,34 @@ def _prim_call(prim, ctx):
     args = prim.value[1]['procParams']
     arg_vals = [expression(arg, ctx) for arg in args]
 
-    if name == 'length':
-        return sdl_length(arg_vals[0], args[0].exprType, ctx)
-    elif name == 'present':
-        return sdl_present(arg_vals[0], ctx)
-    elif name == 'abs':
+    if name == 'abs':
         return sdl_abs(arg_vals[0], ctx)
+    elif name == 'ceil':
+        return sdl_ceil(arg_vals[0], ctx)
+    elif name == 'cos':
+        return sdl_cos(arg_vals[0], ctx)
     elif name == 'fix':
         return sdl_fix(arg_vals[0], ctx)
     elif name == 'float':
         return sdl_float(arg_vals[0], ctx)
-    elif name == 'power':
-        return sdl_power(arg_vals[0], arg_vals[1], ctx)
+    elif name == 'floor':
+        return sdl_floor(arg_vals[0], ctx)
+    elif name == 'length':
+        return sdl_length(arg_vals[0], args[0].exprType, ctx)
     elif name == 'num':
         return sdl_num(arg_vals[0], ctx)
+    elif name == 'power':
+        return sdl_power(arg_vals[0], arg_vals[1], ctx)
+    elif name == 'present':
+        return sdl_present(arg_vals[0], ctx)
+    elif name == 'round':
+        return sdl_round(arg_vals[0], ctx)
+    elif name == 'sin':
+        return sdl_sin(arg_vals[0], ctx)
+    elif name == 'sqrt':
+        return sdl_sqrt(arg_vals[0], ctx)
+    elif name == 'trunc':
+        return sdl_trunc(arg_vals[0], ctx)
 
     raise CompileError('Unknown operator %s' % name)
 
@@ -1806,13 +1859,43 @@ def sdl_present(s_ptr, ctx):
 
 
 def sdl_abs(x_val, ctx):
-    ''' Generate the IR for a abs operation '''
+    ''' Generate the IR for an abs operation '''
     if x_val.type.kind == core.TYPE_INTEGER:
         expr_conv = ctx.builder.sitofp(x_val, ctx.double)
         res_val = sdl_call('fabs', [expr_conv], ctx)
         return ctx.builder.fptosi(res_val, ctx.i64)
     else:
-        return sdl_call('fabs', [x_val])
+        return sdl_call('fabs', [x_val], ctx)
+
+
+def sdl_floor(x_val, ctx):
+    ''' Generate the IR for a floor operation '''
+    return sdl_call('floor', [x_val], ctx)
+
+
+def sdl_ceil(x_val, ctx):
+    ''' Generate the IR for a ceil operation '''
+    return sdl_call('ceil', [x_val], ctx)
+
+
+def sdl_cos(x_val, ctx):
+    ''' Generate the IR for a cos operation '''
+    return sdl_call('cos', [x_val], ctx)
+
+
+def sdl_sin(x_val, ctx):
+    ''' Generate the IR for a sin operation '''
+    return sdl_call('sin', [x_val], ctx)
+
+
+def sdl_sqrt(x_val, ctx):
+    ''' Generate the IR for a sqrt operation '''
+    return sdl_call('sqrt', [x_val], ctx)
+
+
+def sdl_trunc(x_val, ctx):
+    ''' Generate the IR for a cos operation '''
+    return sdl_call('trunc', [x_val], ctx)
 
 
 def sdl_fix(x_val, ctx):
@@ -1834,6 +1917,11 @@ def sdl_power(x_val, y_val, ctx):
         return ctx.builder.fptosi(res_val, ctx.i64)
     else:
         return sdl_call('powi', [x_val, y_val], ctx)
+
+
+def sdl_round(x_val, ctx):
+    ''' Generate the IR for a float operation '''
+    return sdl_call('round', [x_val], ctx)
 
 
 def sdl_num(enum_val, ctx):

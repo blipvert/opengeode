@@ -28,6 +28,7 @@ __author__ = 'Maxime Perrotin'
 
 import sys
 import os
+import math
 import logging
 import traceback
 from itertools import chain, permutations, combinations
@@ -100,19 +101,32 @@ ENUMERATED = type('EnumeratedType', (object,), {'kind': 'EnumeratedType'})
 
 UNKNOWN_TYPE = type('UnknownType', (object,), {'kind': 'UnknownType'})
 
-
-# Special SDL operators and signature
-SPECIAL_OPERATORS = {'length': [LIST],
-                     'write': [ANY_TYPE],
-                     'writeln': [ANY_TYPE],
-                     'present': [CHOICE],
-                     'set_timer': [INTEGER, TIMER],
-                     'reset_timer': [TIMER],
-                     'abs': [NUMERICAL],
-                     'num': [ENUMERATED],
-                     'float': [NUMERICAL],
-                     'fix': [NUMERICAL],
-                     'power': [NUMERICAL, INTEGER]}
+SPECIAL_OPERATORS = {
+    'abs': [{'type': NUMERICAL, 'direction': 'in'}],
+    'ceil': [{'type': REAL, 'direction': 'in'}],
+    'cos': [{'type': REAL, 'direction': 'in'}],
+    'fix': [{'type': NUMERICAL, 'direction': 'in'}],
+    'float': [{'type': NUMERICAL, 'direction': 'in'}],
+    'floor': [{'type': REAL, 'direction': 'in'}],
+    'length': [{'type': LIST, 'direction': 'in'}],
+    'num': [{'type': ENUMERATED, 'direction': 'in'}],
+    'power': [
+        {'type': NUMERICAL, 'direction': 'in'},
+        {'type': INTEGER, 'direction': 'in'}
+    ],
+    'present': [{'type': CHOICE, 'direction': 'in'}],
+    'reset_timer': [{'type': TIMER, 'direction': 'in'}],
+    'round': [{'type': REAL, 'direction': 'in'}],
+    'set_timer': [
+        {'type': INTEGER, 'direction': 'in'},
+        {'type': TIMER, 'direction': 'in'}
+    ],
+    'sin': [{'type': REAL, 'direction': 'in'}],
+    'sqrt': [{'type': REAL, 'direction': 'in'}],
+    'trunc': [{'type': REAL, 'direction': 'in'}],
+    'write': [{'type': ANY_TYPE, 'direction': 'in'}],
+    'writeln': [{'type': ANY_TYPE, 'direction': 'in'}],
+}
 
 # Container to keep a list of types mapped from ANTLR Tokens
 # (Used with singledispatch/visitor pattern)
@@ -149,6 +163,11 @@ def is_integer(ty):
     )
 
 
+def is_real(ty):
+    ''' Return true if a type is a Real Type '''
+    return find_basic_type(ty).kind == 'RealType'
+
+
 def is_numeric(ty):
     ''' Return true if a type is a Numeric Type '''
     return find_basic_type(ty).kind in (
@@ -159,12 +178,48 @@ def is_numeric(ty):
     )
 
 
+def is_boolean(ty):
+    ''' Return true if a type is a Boolean Type '''
+    return find_basic_type(ty).kind == 'BooleanType'
+
+
 def is_string(ty):
     ''' Return true if a type is a String Type '''
     return find_basic_type(ty).kind in (
         'StandardStringType',
-        'OctetStringType'
+        'OctetStringType',
+        'StringType'
     )
+
+
+def is_sequenceof(ty):
+    ''' Return true if a type is a SequenceOf Type '''
+    return find_basic_type(ty).kind == 'SequenceOfType'
+
+
+def is_list(ty):
+    ''' Return true if a type is a List Type '''
+    return is_string(ty) or is_sequenceof(ty) or ty == LIST
+
+
+def is_enumerated(ty):
+    ''' Return true if a type is an Enumerated Type '''
+    return find_basic_type(ty).kind == 'EnumeratedType' or ty == ENUMERATED
+
+
+def is_sequence(ty):
+    ''' Return true if a type is a Sequence Type '''
+    return find_basic_type(ty).kind == 'SequenceType'
+
+
+def is_choice(ty):
+    ''' Return true if a type is a Choice Type '''
+    return find_basic_type(ty).kind == 'ChoiceType' or ty == CHOICE
+
+
+def is_timer(ty):
+    ''' Return true if a type is a Timer Type '''
+    return find_basic_type(ty).kind == 'TimerType'
 
 
 def sdl_to_asn1(sort):
@@ -360,149 +415,169 @@ def is_constant(var):
     return False
 
 
-def fix_special_operators(op_name, expr_list, context):
-    ''' Verify/fix type of special operators parameters '''
-    if op_name.lower() in ('length', 'present', 'abs', 'float', 'fix', 'num'):
-        if len(expr_list) != 1:
-            raise AttributeError('Only one parameter for the {} operator'
-                                 .format(op_name))
-        expr = expr_list[0]
-        if expr.exprType is UNKNOWN_TYPE:
-            expr.exprType = find_variable(expr.value[0], context)
-            # XXX should change type to PrimVariable
-        basic = find_basic_type(expr.exprType)
-        if op_name.lower() == 'length' and basic.kind != 'SequenceOfType' \
-                and not is_string(basic):
-            raise TypeError('Length operator works only on strings/lists')
-        elif op_name.lower() == 'present' and basic.kind != 'ChoiceType':
-            raise TypeError('Present operator works only on CHOICE types')
-        elif op_name.lower() in ('abs', 'float', 'fix') \
-                and not is_numeric(basic):
-            raise TypeError('"{}" operator needs a numerical parameter'.format(
-                op_name))
-        elif op_name.lower() == 'num' and basic.kind != 'EnumeratedType':
-            raise TypeError('Num operaror works only with enumerations')
-    elif op_name.lower() == 'power':
-        if len(expr_list) != 2:
-            raise AttributeError('The "power" operator takes two parameters')
-        for idx, expr in enumerate(expr_list):
-            if expr.exprType is UNKNOWN_TYPE:
-                expr.exprType = find_variable(expr.value[0], context)
-                # XXX should change type to PrimVariable
-            if idx == 0 and not is_numeric(expr.exprType):
-                raise TypeError('First parameter of power must be numerical')
-            elif idx == 1 and not is_integer(expr.exprType):
-                raise TypeError('Second parameter of power must be integer')
-    elif op_name.lower() in ('write', 'writeln'):
-        for param in expr_list:
-            if param.exprType is UNKNOWN_TYPE:
-                for each in (INTEGER, REAL, BOOLEAN, RAWSTRING, OCTETSTRING):
-                    try:
-                        check_type_compatibility(param, each, context)
-                        param.exprType = each
-                        break
-                    except TypeError:
-                        continue
-                else:
-                    # Type not found among supported types
-                    # Has to be a variable...otherwise, error!
-                    try:
-                        param.exprType = find_variable(param.value[0], context)
-                    except (KeyError, AttributeError):
-                        raise TypeError('Could not determine type of argument'
-                                        ' "{}"'.format(param.inputString))
-            basic = find_basic_type(param.exprType)
-            if basic.kind not in ('IntegerType', 'Integer32Type',
-                                  'RealType', 'BooleanType') \
-                                and not basic.kind.endswith('StringType'):
-                # Currently supported printable types
-                raise TypeError('Write operator does not support type')
-    elif op_name.lower() == 'set_timer':
-        if len(expr_list) != 2:
-            raise TypeError('SET_TIMER has 2 parameters: (int, timer_name)')
-        basic = find_basic_type(expr_list[0].exprType)
-        if not basic.kind.startswith('Integer'):
-            raise TypeError('SET_TIMER first parameter is not an integer')
-        timer = expr_list[1].inputString
-        for each in chain(context.timers, context.global_timers):
-            if each.lower() == timer.lower():
-                break
-        else:
-            raise TypeError('Timer {} is not defined'.format(timer))
-    elif op_name.lower == 'reset_timer':
-        if len(expr_list) != 1:
-            raise TypeError('RESET_TIMER has 1 parameter: timer_name')
-        timer = expr_list[0].inputString
-        for each in context.timers:
-            if each.lower() == timer.lower():
-                break
-        else:
-            raise TypeError('Timer {} is not defined'.format(timer))
-    else:
-        # TODO: other operators
-        return
-
-
-def check_and_fix_op_params(op_name, expr_list, context):
-    '''
-        Verify and/or set the type of a procedure/output parameters
-        TODO: when supported, add operators
-    '''
-    # (1) Find the signature of the function
-    # signature will hold the list of parameters for the function
-    LOG.debug('[check_and_fix_op_params] ' + op_name + ' - ' + str(expr_list))
-    signature = []
-    key = ''
+def signature(name, context):
+    ''' Return the signature of a procecure/output/operator '''
+    name = name.lower()
+    if name in SPECIAL_OPERATORS:
+        return SPECIAL_OPERATORS[name]
 
     for out_sig in context.output_signals:
-        if out_sig['name'].lower() == op_name.lower():
+        if out_sig['name'].lower() == name:
+            signature = []
             if out_sig.get('type'):
                 # output signals: one single parameter
-                signature = [{'type': out_sig.get('type'),
-                              'name': out_sig.get('param_name' or ''),
-                              'direction': 'in'}]
-            break
-    else:
-        # Procedures (inner and external)
-        for inner_proc in context.procedures:
-            key = inner_proc.inputString
-            if key.lower() == op_name.lower():
-                signature = inner_proc.fpar
-                break
-        else:
-            if op_name.lower() not in SPECIAL_OPERATORS:
-                raise AttributeError('Operator/output/procedure not found: '
-                    + op_name)
-            else:
-                # Special operators: parameters are context dependent
-                fix_special_operators(op_name, expr_list, context)
-                return
-    # (2) Check that the number of given parameters matches the signature
-    if signature is not None and len(signature) != len(expr_list):
-        raise TypeError('Wrong number of parameters')
-    # (3) Check each individual parameter type
-    for idx, param in enumerate(expr_list):
-        if signature is None:
-            break
-        # Get parameter type name from the function signature:
-        param_type = type_name(signature[idx].get('type'))
-        # Retrieve the type (or None if it is a sepecial operator)
-        dataview_entry = types().get(param_type) or UNKNOWN_TYPE
-        if dataview_entry is not UNKNOWN_TYPE:
-            dataview_type = new_ref_type(param_type)
-        else:
-            dataview_type = UNKNOWN_TYPE
+                signature.append({
+                    'type': out_sig.get('type'),
+                    'name': out_sig.get('param_name' or ''),
+                    'direction': 'in',
+                })
+            return signature
 
+    for inner_proc in context.procedures:
+        proc_name = inner_proc.inputString
+        if proc_name.lower() == name:
+            return inner_proc.fpar
+
+    raise AttributeError('Operator/output/procedure not found: ' + name)
+
+
+def check_call(name, params, context):
+    ''' Check the parameter types of a procedure/output/operator call,
+        returning the type of its result '''
+    LOG.debug('[check_call] ' + name + ' - ' + str(params))
+
+    # Special case for write/writeln functions
+    if name.lower() in ('write', 'writeln'):
+        for p in params:
+            p_ty = p.exprType
+            if is_numeric(p_ty) or is_boolean(p_ty) or is_string(p_ty):
+                continue
+            raise TypeError('Type {} not supported in call to {}'.
+                format(type_name(p.exprType), name))
+        return
+
+    # (1) Find the signature of the function
+    # signature will hold the list of parameters for the function
+    sign = signature(name, context)
+
+    # (2) Check that the number of given parameters matches the signature
+    if len(sign) != len(params):
+        raise TypeError('Expected {} arguments in call to {} ({} received)'.
+            format(len(sign), name, len(params)))
+
+    # (3) Check each individual parameter type
+    for idx, param in enumerate(params):
         expr = ogAST.ExprAssign()
         expr.left = ogAST.PrimVariable()
-        expr.left.exprType = dataview_type
+        expr.left.exprType = sign[idx]['type']
         expr.right = param
-        fix_expression_types(expr, context)
-        expr_list[idx] = expr.right
-        if signature[idx].get('direction') != 'in' \
+
+        try:
+            fix_expression_types(expr, context)
+            params[idx] = expr.right
+        except TypeError:
+            expected = type_name(sign[idx]['type'])
+            received = type_name(expr.right.exprType)
+            raise TypeError('Expected type {} in call to {} ({} received)'.
+                format(expected, name, received))
+
+        if sign[idx].get('direction') != 'in' \
                 and not isinstance(expr.right, ogAST.PrimVariable):
             raise TypeError('OUT parameter "{}" is not a variable'
-                            .format(expr.right.inputString))
+                .format(expr.right.inputString))
+
+    # (4) Compute the type of the result
+    param_btys = [find_basic_type(p.exprType) for p in params]
+    if name == 'abs':
+        return type('Abs', (param_btys[0],), {
+            'Min': str(max(float(param_btys[0].Min), 0)),
+            'Max': str(max(float(param_btys[0].Max), 0))
+        })
+
+    elif name == 'ceil':
+        return type('Ceil', (REAL,), {
+            'Min': str(math.ceil(float(param_btys[0].Min))),
+            'Max': str(math.ceil(float(param_btys[0].Max)))
+        })
+
+    elif name == 'cos':
+        return type('Cos', (REAL,), {
+            'Min': str(-1.0),
+            'Max': str(1.0)
+        })
+
+    elif name == 'fix':
+        return type('Fix', (INTEGER,), {
+            'Min': param_btys[0].Min,
+            'Max': param_btys[0].Max
+        })
+
+    elif name == 'float':
+        return type('Float', (REAL,), {
+            'Min': param_btys[0].Min,
+            'Max': param_btys[0].Max
+        })
+
+    elif name == 'floor':
+        return type('Floor', (REAL,), {
+            'Min': str(math.floor(float(param_btys[0].Min))),
+            'Max': str(math.floor(float(param_btys[0].Max)))
+        })
+
+    elif name == 'length':
+        return type('Length', (INTEGER,), {
+            'Min': param_btys[0].Min,
+            'Max': param_btys[0].Max
+        })
+
+    elif name == 'num':
+        enum_values = [int(each.IntValue)
+                       for each in param_btys[0].EnumValues.viewvalues()]
+
+        return type('Num', (INTEGER,), {
+            'Min': str(min(enum_values)),
+            'Max': str(max(enum_values))
+        })
+
+    elif name == 'power':
+        return type('Power', (param_btys[0],), {
+            'Min': str(pow(float(param_btys[0].Min),
+                           float(param_btys[1].Min))),
+            'Max': str(pow(float(param_btys[0].Max),
+                           float(param_btys[1].Max)))
+        })
+
+    elif name == 'present':
+        return type('Present', (object,), {
+            'kind': 'ChoiceEnumeratedType',
+            'EnumValues': param_btys[0].Children
+        })
+
+    elif name == 'round':
+        return type('Round', (REAL,), {
+            'Min': str(round(float(param_btys[0].Min))),
+            'Max': str(round(float(param_btys[0].Max)))
+        })
+
+    elif name == 'sin':
+        return type('Sin', (REAL,), {
+            'Min': str(-1.0),
+            'Max': str(1.0)
+        })
+
+    elif name == 'sqrt':
+        return type('Sqrt', (REAL,), {
+            'Min': str(0.0),
+            'Max': str(math.sqrt(float(param_btys[0].Max)))
+        })
+
+    elif name == 'trunc':
+        return type('Trunc', (REAL,), {
+            'Min': str(math.trunc(float(param_btys[0].Min))),
+            'Max': str(math.trunc(float(param_btys[0].Max)))
+        })
+
+    return UNKNOWN_TYPE
 
 
 def check_range(typeref, type_to_check):
@@ -521,36 +596,36 @@ def check_range(typeref, type_to_check):
         raise TypeError('Missing range')
 
 
-def check_type_compatibility(primary, typeRef, context):
+def check_type_compatibility(primary, type_ref, context):
     '''
         Check if an ogAST.Primary (raw value, enumerated, ASN.1 Value...)
-        is compatible with a given type (typeRef is an ASN1Scc type)
+        is compatible with a given type (type_ref is an ASN1Scc type)
         Does not return anything if OK, otherwise raises TypeError
     '''
-    assert typeRef is not None
-    if typeRef is UNKNOWN_TYPE:
+    assert type_ref is not None
+    if type_ref is UNKNOWN_TYPE:
         raise TypeError('Type reference is unknown')
     if isinstance(primary, ogAST.PrimConstant):
         # ASN.1 constants type is unknown (Asn1 backend to be completed)
         return
-    actual_type = find_basic_type(typeRef)
+    basic_type = find_basic_type(type_ref)
     LOG.debug("[check_type_compatibility] "
               "checking if {value} is of type {typeref}"
-              .format(value=primary.inputString, typeref=type_name(typeRef)))
+              .format(value=primary.inputString, typeref=type_name(type_ref)))
 
     if (isinstance(primary, ogAST.PrimEnumeratedValue)
-            and actual_type.kind.endswith('EnumeratedType')):
+            and basic_type.kind.endswith('EnumeratedType')):
         # If type ref is an enumeration, check that the value is valid
         # Note, when using the "present" operator of a CHOICE type, the
         # resulting value is actually an EnumeratedType
         enumerant = primary.inputString.replace('_', '-')
-        corr_type = actual_type.EnumValues.get(enumerant)
+        corr_type = basic_type.EnumValues.get(enumerant)
         if corr_type:
             return
         else:
             err = ('Value "' + primary.inputString +
                    '" not in this enumeration: ' +
-                   str(actual_type.EnumValues.keys()))
+                   str(basic_type.EnumValues.keys()))
             raise TypeError(err)
     elif isinstance(primary, ogAST.PrimConditional):
         then_expr = primary.value['then']
@@ -558,61 +633,62 @@ def check_type_compatibility(primary, typeRef, context):
 
         for expr in (then_expr, else_expr):
             if expr.is_raw:
-                check_type_compatibility(expr, typeRef, context)
+                check_type_compatibility(expr, type_ref, context)
         return
 
     elif isinstance(primary, ogAST.PrimVariable):
         try:
-            compare_types(primary.exprType, typeRef)
+            compare_types(primary.exprType, type_ref)
         except TypeError as err:
             raise TypeError('{expr} should be of type {ty} - {err}'
                             .format(expr=primary.inputString,
-                                    ty=type_name(typeRef),
+                                    ty=type_name(type_ref),
                                     err=str(err)))
         return
+
     elif isinstance(primary, ogAST.PrimInteger) \
-            and actual_type.kind.startswith('Integer'):
+            and is_integer(basic_type) or type_ref == NUMERICAL:
         return
 
     elif isinstance(primary, ogAST.PrimReal) \
-            and actual_type.kind.startswith('Real'):
+            and is_real(basic_type) or type_ref == NUMERICAL:
         return
 
-    elif isinstance(primary, ogAST.PrimBoolean) \
-            and actual_type.kind.startswith('Boolean'):
+    elif isinstance(primary, ogAST.PrimBoolean) and is_boolean(basic_type):
         return
+
     elif (isinstance(primary, ogAST.PrimEmptyString) and
-                                         actual_type.kind == 'SequenceOfType'):
-        if int(actual_type.Min) == 0:
+                                         basic_type.kind == 'SequenceOfType'):
+        if int(basic_type.Min) == 0:
             return
         else:
             raise TypeError('SEQUENCE OF has a minimum size of '
-                            + actual_type.Min + ')')
+                            + basic_type.Min + ')')
     elif isinstance(primary, ogAST.PrimSequenceOf) \
-            and actual_type.kind == 'SequenceOfType':
-        if (len(primary.value) < int(actual_type.Min) or
-                len(primary.value) > int(actual_type.Max)):
+            and basic_type.kind == 'SequenceOfType':
+        if (len(primary.value) < int(basic_type.Min) or
+                len(primary.value) > int(basic_type.Max)):
             raise TypeError(str(len(primary.value)) +
                       ' elements in SEQUENCE OF, while constraint is [' +
-                      str(actual_type.Min) + '..' + str(actual_type.Max) + ']')
+                      str(basic_type.Min) + '..' + str(basic_type.Max) + ']')
         for elem in primary.value:
-            check_type_compatibility(elem, actual_type.type, context)
+            check_type_compatibility(elem, basic_type.type, context)
         return
     elif isinstance(primary, ogAST.PrimSequence) \
-            and actual_type.kind == 'SequenceType':
+            and basic_type.kind == 'SequenceType':
         user_nb_elem = len(primary.value.keys())
-        type_nb_elem = len(actual_type.Children.keys())
+        type_nb_elem = len(basic_type.Children.keys())
         if user_nb_elem != type_nb_elem:
             raise TypeError('Wrong number of fields in SEQUENCE of type {}'
-                            .format(type_name(typeRef)))
+                            .format(type_name(type_ref)))
         else:
-            for field, fd_data in actual_type.Children.viewitems():
+            for field, fd_data in basic_type.Children.viewitems():
                 ufield = field.replace('-', '_')
                 if ufield not in primary.value:
                     raise TypeError('Missing field {field} in SEQUENCE'
                                     ' of type {t1} '
                                     .format(field=ufield,
-                                            t1=type_name(typeRef)))
+                                            t1=type_name(type_ref)))
                 else:
                     # If the user field is a raw value
                     if primary.value[ufield].is_raw:
@@ -630,16 +706,16 @@ def check_type_compatibility(primary, typeRef, context):
                                         ' - ' + str(err))
         return
     elif isinstance(primary, ogAST.PrimChoiceItem) \
-                              and actual_type.kind.startswith('Choice'):
-        for choicekey, choice in actual_type.Children.viewitems():
+                              and basic_type.kind.startswith('Choice'):
+        for choicekey, choice in basic_type.Children.viewitems():
             if choicekey.lower() == primary.value['choice'].lower():
                 break
         else:
             raise TypeError('Non-existent choice "{choice}" in type {t1}'
                             .format(choice=primary.value['choice'],
-                            t1=type_name(typeRef)))
+                            t1=type_name(type_ref)))
         # compare primary.value['value']
-        # with actual_type['Children'][primary.choiceItem['choice']]
+        # with basic_type['Children'][primary.choiceItem['choice']]
         value = primary.value['value']
         choice_field_type = choice.type
         # if the user field is a raw value:
@@ -658,19 +734,19 @@ def check_type_compatibility(primary, typeRef, context):
         value.exprType = choice_field_type         # XXX
         return
     elif isinstance(primary, ogAST.PrimChoiceDeterminant) \
-                and actual_type.kind.startswith('Choice'):
-        for choicekey, choice in actual_type.EnumValues.viewitems():
+                and basic_type.kind.startswith('Choice'):
+        for choicekey, choice in basic_type.EnumValues.viewitems():
             if choicekey.replace('-', '_').lower() == \
                     primary.inputString.lower():
                 break
         else:
             raise TypeError('Non-existent choice "{choice}" in type {t1}'
                             .format(choice=primary.inputString,
-                            t1=type_name(typeRef)))
+                            t1=type_name(type_ref)))
 
     elif isinstance(primary, ogAST.PrimStringLiteral):
         # Octet strings
-        basic_type = find_basic_type(typeRef)
+        basic_type = find_basic_type(type_ref)
         if basic_type.kind == 'StandardStringType':
             return
         elif basic_type.kind.endswith('StringType'):
@@ -684,14 +760,14 @@ def check_type_compatibility(primary, typeRef, context):
         else:
             raise TypeError('String literal not expected')
     elif (isinstance(primary, ogAST.PrimMantissaBaseExp) and
-                                            actual_type.kind == 'RealType'):
+                                            basic_type.kind == 'RealType'):
         LOG.debug('PROBABLY (it is a float but I did not check'
                   'if values are compatible)')
         return
     else:
         raise TypeError('{prim} does not match type {t1}'
                         .format(prim=primary.inputString,
-                                t1=type_name(typeRef)))
+                                t1=type_name(type_ref)))
 
 
 def compare_types(type_a, type_b):
@@ -706,22 +782,18 @@ def compare_types(type_a, type_b):
 
     if type_a == type_b:
         return
+    elif NUMERICAL in (type_a, type_b) and is_numeric(type_a) \
+            and is_numeric(type_b):
+        return
+    elif LIST in (type_a, type_b) and is_list(type_a) and is_list(type_b):
+        return
+    elif ENUMERATED in (type_a, type_b) and is_enumerated(type_a) \
+            and is_enumerated(type_b):
+        return
+    elif CHOICE in (type_a, type_b) and is_choice(type_a) and is_choice(type_b):
+        return
 
     # Check if both types have basic compatibility
-
-    simple_types = (
-        'IntegerType',
-        'BooleanType',
-        'RealType',
-        'StringType',
-        'SequenceOfType',
-        'Integer32Type',
-        'OctetStringType'
-    )
-
-    for ty in (type_a, type_b):
-        if ty.kind not in simple_types:
-            raise TypeError('Type {} is not a basic type'.format(type_name(ty)))
 
     if type_a.kind == type_b.kind:
         if type_a.kind == 'SequenceOfType':
@@ -736,6 +808,8 @@ def compare_types(type_a, type_b):
         return
     elif is_integer(type_a) and is_integer(type_b):
         return
+    elif is_real(type_a) and is_real(type_b):
+        return
     else:
         raise TypeError('Incompatible types {} and {}'.format(
             type_name(type_a),
@@ -745,7 +819,6 @@ def compare_types(type_a, type_b):
 
 def find_variable(var, context):
     ''' Look for a variable name in the context and return its type '''
-    result = UNKNOWN_TYPE
     LOG.debug('[find_variable] checking if ' + str(var) + ' is defined')
     # all DCL-variables
     all_visible_variables = dict(context.global_variables)
@@ -759,16 +832,17 @@ def find_variable(var, context):
     except AttributeError:
         # No FPAR section
         pass
+
     for varname, (vartype, _) in all_visible_variables.viewitems():
         # Case insensitive comparison with variables
         if var.lower() == varname.lower():
-            result = vartype
             LOG.debug(str(var) + ' is defined')
-            return result
+            return vartype
+
     for timer in chain(context.timers, context.global_timers):
         if var.lower() == timer.lower():
             LOG.debug(str(var) + ' is defined')
-            return result
+            return TIMER
 
     LOG.debug('[find_variable] result: not found, raising exception')
     raise AttributeError('Variable {var} not defined'.format(var=var))
@@ -1340,82 +1414,21 @@ def primary_call(root, context):
     node.inputString = get_input_string(root)
     node.tmpVar = tmp()
 
-    ident = root.children[0].children[0].children[0].text.lower()
+    name = root.children[0].children[0].children[0].text.lower()
 
     params, params_errors, param_warnings = \
                                 expression_list(root.children[1], context)
     errors.extend(params_errors)
     warnings.extend(param_warnings)
 
+    node.value = [name, {'procParams': params}]
+
     try:
-        fix_special_operators(ident, params, context)
-    except (AttributeError, TypeError) as err:
+        node.exprType = check_call(name, params, context)
+    except (TypeError, ValueError) as err:
         errors.append(error(root, str(err)))
-
-    node.value = [ident, {'procParams': params}]
-
-    params_bty = [find_basic_type(p.exprType) for p in params]
-
-    if ident == 'present':
-        try:
-            node.exprType = type('present', (object,), {
-                'kind': 'ChoiceEnumeratedType',
-                'EnumValues': params_bty[0].Children
-            })
-        except AttributeError:
-            errors.append(error(root, 'Parameter type is not a CHOICE'))
-
-    elif ident in ('length', 'fix'):
-        # result is an integer type with range of the param type
-        try:
-            node.exprType = type('fix', (INTEGER,), {
-                'Min': params_bty[0].Min,
-                'Max': params_bty[0].Max
-            })
-        except AttributeError:
-            errors.append(error(root, 'Parameter type has no range'))
-
-    elif ident == 'float':
-        try:
-            node.exprType = type('float_op', (REAL,), {
-                'Min': params_bty[0].Min,
-                'Max': params_bty[0].Max
-            })
-        except AttributeError:
-            errors.append(error(root, 'Parameter type has no range'))
-
-    elif ident == 'power':
-        try:
-            node.exprType = type('Power', (params_bty[0],), {
-                'Min': str(pow(float(params_bty[0].Min),
-                               float(params_bty[1].Min))),
-                'Max': str(pow(float(params_bty[0].Max),
-                               float(params_bty[1].Max)))
-            })
-        except OverflowError:
-            errors.append(error(root, 'Result can exceeds 64-bits'))
-        except AttributeError:
-            errors.append(error(root, 'Parameter type has no range'))
-
-    elif ident == 'abs':
-        try:
-            node.exprType = type('Abs', (params_bty[0],), {
-                'Min': str(max(float(params_bty[0].Min), 0)),
-                'Max': str(max(float(params_bty[0].Max), 0))
-            })
-        except AttributeError:
-            errors.append(error(root, '"Abs" parameter type has no range'))
-    elif ident == 'num':
-        try:
-            enum_values = [int(each.IntValue)
-                           for each in params_bty[0].EnumValues.viewvalues()]
-
-            node.exprType = type('Num', (INTEGER,), {
-                'Min': str(min(enum_values)),
-                'Max': str(max(enum_values))
-            })
-        except AttributeError:
-            errors.append(error(root, '"Num" parameter error'))
+    except OverflowError:
+        errors.append(error(root, 'Result can exceeds 64-bits'))
 
     return node, errors, warnings
 
@@ -2893,9 +2906,9 @@ def outputbody(root, context):
                     str(child.type))
     # Check/set the type of each param
     try:
-        check_and_fix_op_params(body.get('outputName', ''),
-                                body.get('params', []),
-                                context)
+        check_call(body.get('outputName', '').lower(),
+                   body.get('params', []),
+                   context)
     except (AttributeError, TypeError) as op_err:
         errors.append(str(op_err) + ' - ' + get_input_string(root))
         LOG.debug('[outputbody] call check_and_fix_op_params : '

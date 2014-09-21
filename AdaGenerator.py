@@ -800,6 +800,20 @@ def _prim_call(prim):
         stmts.extend(param_stmts)
         local_decl.extend(local_var)
         ada_string += ('num_{t}({p})'.format(t=exp_typename, p=param_str))
+    elif ident == 'floor':
+        raise NotImplementedError
+    elif ident == 'ceil':
+        raise NotImplementedError
+    elif ident == 'cos':
+        raise NotImplementedError
+    elif ident == 'round':
+        raise NotImplementedError
+    elif ident == 'sin':
+        raise NotImplementedError
+    elif ident == 'sqrt':
+        raise NotImplementedError
+    elif ident == 'trunc':
+        raise NotImplementedError
     else:
         ada_string += '('
         # Take all params and join them with commas
