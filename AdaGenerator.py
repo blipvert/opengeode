@@ -175,6 +175,7 @@ with System.IO;
 use System.IO;
 
 with Ada.Unchecked_Conversion;
+with Ada.Numerics.Generic_Elementary_Functions;
 
 {dataview}
 
@@ -789,7 +790,7 @@ def _prim_call(prim):
     elif ident == 'num':
         # User wants to get an enumerated corresponding integer value
         exp = params[0]
-        exp_type = find_basic_type(exp.exprType)
+        #exp_type = find_basic_type(exp.exprType)
         # Get the ASN.1 type name as it is needed to build the Ada expression
         exp_typename = \
                 (getattr(exp.exprType, 'ReferencedTypeName', None)
@@ -801,19 +802,68 @@ def _prim_call(prim):
         local_decl.extend(local_var)
         ada_string += ('num_{t}({p})'.format(t=exp_typename, p=param_str))
     elif ident == 'floor':
-        raise NotImplementedError
+        # Get the ASN.1 type name as it is needed to build the Ada expression
+        exp = params[0]
+        exp_typename = (getattr(exp.exprType, 'ReferencedTypeName', None)
+                        or 'Long_Float').replace('-', '_')
+        param_stmts, param_str, local_var = expression(exp)
+        stmts.extend(param_stmts)
+        local_decl.extend(local_var)
+        ada_string += "{t}'Floor({p})".format(t=exp_typename, p=param_str)
     elif ident == 'ceil':
-        raise NotImplementedError
+        # Get the ASN.1 type name as it is needed to build the Ada expression
+        exp = params[0]
+        exp_typename = (getattr(exp.exprType, 'ReferencedTypeName', None)
+                        or 'Long_Float').replace('-', '_')
+        param_stmts, param_str, local_var = expression(exp)
+        stmts.extend(param_stmts)
+        local_decl.extend(local_var)
+        ada_string += "{t}'Ceiling({p})".format(t=exp_typename, p=param_str)
     elif ident == 'cos':
-        raise NotImplementedError
+        exp = params[0]
+        param_stmts, param_str, local_var = expression(exp)
+        stmts.extend(param_stmts)
+        local_decl.extend(local_var)
+        local_decl.append('package Math is new '
+                          'Ada.Numerics.Generic_Elementary_Functions'
+                          '(Long_Float);')
+        ada_string += "Math.Cos({})".format(param_str)
     elif ident == 'round':
-        raise NotImplementedError
+        exp = params[0]
+        # Get the ASN.1 type name as it is needed to build the Ada expression
+        exp_typename = (getattr(exp.exprType, 'ReferencedTypeName', None)
+                        or 'Long_Float').replace('-', '_')
+        param_stmts, param_str, local_var = expression(exp)
+        stmts.extend(param_stmts)
+        local_decl.extend(local_var)
+        ada_string += "{t}'Rounding({p})".format(t=exp_typename, p=param_str)
     elif ident == 'sin':
-        raise NotImplementedError
+        exp = params[0]
+        param_stmts, param_str, local_var = expression(exp)
+        stmts.extend(param_stmts)
+        local_decl.extend(local_var)
+        local_decl.append('package Math is new '
+                          'Ada.Numerics.Generic_Elementary_Functions'
+                          '(Long_Float);')
+        ada_string += "Math.Sin({})".format(param_str)
     elif ident == 'sqrt':
-        raise NotImplementedError
+        exp = params[0]
+        param_stmts, param_str, local_var = expression(exp)
+        stmts.extend(param_stmts)
+        local_decl.extend(local_var)
+        local_decl.append('package Math is new '
+                          'Ada.Numerics.Generic_Elementary_Functions'
+                          '(Long_Float);')
+        ada_string += "Math.Sqrt({})".format(param_str)
     elif ident == 'trunc':
-        raise NotImplementedError
+        exp = params[0]
+        # Get the ASN.1 type name as it is needed to build the Ada expression
+        exp_typename = (getattr(exp.exprType, 'ReferencedTypeName', None)
+                        or 'Long_Float').replace('-', '_')
+        param_stmts, param_str, local_var = expression(exp)
+        stmts.extend(param_stmts)
+        local_decl.extend(local_var)
+        ada_string += "{t}'Truncation({p})".format(t=exp_typename, p=param_str)
     else:
         ada_string += '('
         # Take all params and join them with commas
