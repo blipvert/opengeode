@@ -898,8 +898,6 @@ def _prim_selector(prim):
 @expression.register(ogAST.ExprPlus)
 @expression.register(ogAST.ExprMul)
 @expression.register(ogAST.ExprMinus)
-@expression.register(ogAST.ExprEq)
-@expression.register(ogAST.ExprNeq)
 @expression.register(ogAST.ExprGt)
 @expression.register(ogAST.ExprGe)
 @expression.register(ogAST.ExprLt)
@@ -918,6 +916,34 @@ def _basic_operators(expr):
     code.extend(right_stmts)
     local_decl.extend(left_local)
     local_decl.extend(right_local)
+    return code, unicode(ada_string), local_decl
+
+
+@expression.register(ogAST.ExprEq)
+@expression.register(ogAST.ExprNeq)
+def _equality(expr):
+    code, left_str, local_decl = expression(expr.left)
+    right_stmts, right_str, right_local = expression(expr.right)
+    code.extend(right_stmts)
+    local_decl.extend(right_local)
+    actual_type = getattr(expr.left.exprType,
+                          'ReferencedTypeName',
+                          None) or expr.left.exprType.kind
+    actual_type = actual_type.replace('-', '_')
+    basic = find_basic_type(expr.left.exprType).kind in ('IntegerType',
+                                                         'Integer32Type',
+                                                         'BooleanType',
+                                                         'RealType',
+                                                         'EnumeratedType',
+                                                        'ChoiceEnumeratedType')
+    if basic:
+        ada_string = u'({left} {op} {right})'.format(
+                left=left_str, op=expr.operand, right=right_str)
+    else:
+        ada_string = u'asn1Scc{asn1}_Equal({left}, {right})'.format(
+                            asn1=actual_type, left=left_str, right=right_str)
+        if isinstance(expr, ogAST.ExprNeq):
+            ada_string = u'not {}'.format(ada_string)
     return code, unicode(ada_string), local_decl
 
 
@@ -951,6 +977,7 @@ def _assign_expression(expr):
 @expression.register(ogAST.ExprOr)
 @expression.register(ogAST.ExprAnd)
 @expression.register(ogAST.ExprXor)
+@expression.register(ogAST.ExprImplies)
 def _bitwise_operators(expr):
     ''' Logical operators '''
     code, local_decl = [], []
@@ -973,11 +1000,19 @@ def _bitwise_operators(expr):
         else:
             right_payload = right_str + string_payload(expr.right, right_str)
         left_payload = left_str + string_payload(expr.left, left_str)
-        ada_string = u'(Data => ({left} {op} {right})'.format(
+
+        if isinstance(expr, ogAST.ExprImplies):
+            ada_string = u'(Data => (({left} and {right}) or not {left}))'\
+                .format(left=left_payload, right=right_payload)
+        else:
+            ada_string = u'(Data => ({left} {op} {right}))'.format(
                 left=left_payload, op=expr.operand, right=right_payload)
-        if basic_type.Min != basic_type.Max:
-            ada_string += u", Length => {left}.Length".format(left=left_str)
-        ada_string += u')'
+
+    elif isinstance(expr, ogAST.ExprImplies):
+        ada_string = u'(({left} and {right}) or not {left})'.format(
+                                left=left_str,
+                                right=right_str)
+
     else:
         ada_string = u'({left} {op}{short} {right})'.format(
                                 left=left_str,
@@ -1361,7 +1396,7 @@ def _decision(dec):
                     exp = u'asn1Scc{actType}_Equal(tmp{idx}, {ans})'.format(
                             actType=actual_type, idx=dec.tmpVar, ans=ans_str)
                     if a.openRangeOp == ogAST.ExprNeq:
-                        exp = 'not ' + exp
+                        exp = u'not {}'.format(exp)
                 else:
                     exp = u'tmp{idx} {op} {ans}'.format(idx=dec.tmpVar,
                             op=a.openRangeOp.operand, ans=ans_str)
