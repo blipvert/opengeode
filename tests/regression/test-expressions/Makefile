@@ -26,6 +26,9 @@ test-llvm:
 	clang expressions.o dataview-uniq.o test_llvm.o -o testcase
 	./testcase
 
+coverage:
+	coverage run  -p ../../../opengeode.py expressions.pr system_structure.pr --toAda
+
 clean:
 	rm -rf *.adb *.ads *.pyc runSpark.sh spark.idx *.o *.ali gnat.cfg examiner \
 	bin *.wrn *.gpr testcase *.ll *.s dataview-uniq.c dataview-uniq.h real.c xer.c \
