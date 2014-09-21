@@ -12,5 +12,8 @@ test-ada:
 	gnatlink test_ada.o basic.ali -lgnat -lm -o testcase
 	./testcase | diff expected -
 
+coverage:
+	coverage run -p ../../../opengeode.py basic.pr system_structure.pr --toAda
+
 clean:
 	rm -rf *.adb *.ads *.pyc runSpark.sh spark.idx *.o *.ali gnat.cfg examiner bin *.wrn *.gpr testcase
